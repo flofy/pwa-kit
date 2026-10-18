@@ -218,7 +218,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           artifact_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts/$ARTIFACT_ID"
-          marker="<!-- reusable-android-apk-artifact -->"
+          marker="<!-- keepscore-capacitor-apk-artifact -->"
           body=$(printf '%s\\n\\n📱 **Android APK preview**\\n\\nCet APK est un artefact de prévisualisation construit depuis cette PR.\\n\\n[Download Android APK artifact](%s)' "$marker" "$artifact_url")
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \\
             --jq '.[] | select(.body | contains("<!-- reusable-android-apk-artifact -->")) | .id' | head -n 1)"
