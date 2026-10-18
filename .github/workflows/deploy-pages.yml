@@ -1,0 +1,76 @@
+name: Reusable GitHub Pages deployment
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        required: false
+        default: "24"
+      pnpm-version:
+        type: string
+        required: false
+        default: "10.18.3"
+      install-command:
+        type: string
+        required: false
+        default: pnpm install --frozen-lockfile
+      build-command:
+        description: Command that builds the static site
+        type: string
+        required: false
+        default: pnpm run build
+      artifact-path:
+        description: Directory containing the built static site
+        type: string
+        required: false
+        default: dist
+      working-directory:
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - name: Install dependencies
+        run: ${{ inputs.install-command }}
+      - name: Build site
+        run: ${{ inputs.build-command }}
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ inputs.working-directory == '.' && inputs.artifact-path || format('{0}/{1}', inputs.working-directory, inputs.artifact-path) }}
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
