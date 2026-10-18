@@ -53,7 +53,7 @@ on:
         type: boolean
         default: true
       gradle-task:
-        description: "Gradle task to run; configure release signing in the app's Gradle project"
+        description: "Gradle task to run; release builds are signed when publishing a release"
         required: false
         type: string
         default: assembleRelease
