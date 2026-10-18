@@ -254,7 +254,7 @@ jobs:
           marker="<!-- keepscore-capacitor-apk-artifact -->"
           body=$(printf '%s\\n\\n📱 **Android APK preview**\\n\\nCet APK est un artefact de prévisualisation construit depuis cette PR.\\n\\n[Download Android APK artifact](%s)' "$marker" "$artifact_url")
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \\
-            --jq '.[] | select(.body | contains("<!-- reusable-android-apk-artifact -->")) | .id' | head -n 1)"
+            --jq '.[] | select(.body | contains("<!-- keepscore-capacitor-apk-artifact -->")) | .id' | head -n 1)"
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null
           else
