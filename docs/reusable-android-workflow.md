@@ -26,11 +26,11 @@ jobs:
 
 Replace the branch ref with a reviewed, immutable release tag after this workflow is merged and versioned. The workflow assumes the caller's Capacitor configuration points to the web build output and that the app-specific asset preparation command (if any) is available in the caller repository.
 
-To publish an APK, pass an existing Git tag through `release-tag` and set `release-asset-name`. The workflow creates a GitHub Release for that tag if one does not exist, then uploads the APK and its SHA-256 sidecar. It does not create Git tags.
+To publish an APK, pass an existing Git tag through `release-tag`, set `release-asset-name`, `android-version-code`, and `android-version-name`. The workflow creates a GitHub Release for that tag if one does not exist, then uploads the APK and its SHA-256 sidecar. It does not create Git tags.
 
 ## Signing
 
-When `release-tag` is set, all four secrets are required: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The workflow decodes the keystore to the runner's temporary directory and applies an ephemeral Gradle init script to sign the release variant. A release publication fails rather than silently publishing an unsigned APK when any signing secret is missing.
+When `release-tag` is set, provide a positive, monotonically increasing `android-version-code` and an `android-version-name`. The workflow writes these into the generated Android project so each release can update the previous installation. All four signing secrets are also required: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The workflow decodes the keystore to the runner's temporary directory and applies an ephemeral Gradle init script to sign the release variant. A release publication fails rather than silently publishing an unsigned APK when any signing secret is missing.
 
 Keep the keystore and passwords in GitHub Actions secrets or an appropriate protected environment. Never commit signing material. Keep the same keystore for every release so existing installations can update in place. Preview builds that omit `release-tag` do not require signing secrets.
 
