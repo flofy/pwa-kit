@@ -164,26 +164,59 @@ jobs:
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Configure optional Android signing keystore
+      - name: Configure stable release signing
+        if: inputs.release-tag != ''
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "No keystore supplied; Gradle signing behavior is controlled by the app project."
-            exit 0
-          fi
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::A GitHub secret named $name is required when publishing an Android release."
+              exit 1
+            fi
+          done
           mkdir -p "$RUNNER_TEMP/android-signing"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.keystore"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-signing/release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_GRADLE_INIT_SCRIPT=$RUNNER_TEMP/android-signing/signing.init.gradle" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/android-signing/signing.init.gradle" <<'GRADLE'
+          allprojects { project ->
+            project.plugins.withId('com.android.application') {
+              project.afterEvaluate {
+                def androidExtension = project.extensions.findByName('android')
+                def releaseSigning = androidExtension.signingConfigs.findByName('release')
+                if (releaseSigning == null) {
+                  releaseSigning = androidExtension.signingConfigs.create('release')
+                }
+                releaseSigning.storeFile = new File(System.getenv('ANDROID_KEYSTORE_PATH'))
+                releaseSigning.storePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                releaseSigning.keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+                releaseSigning.keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+                def releaseBuildType = androidExtension.buildTypes.findByName('release')
+                if (releaseBuildType == null) {
+                  throw new GradleException('Android release build type was not found')
+                }
+                releaseBuildType.signingConfig = releaseSigning
+              }
+            }
+          }
+          GRADLE
 
       - name: Build Android APK
         working-directory: ${{ inputs.android-directory }}
         env:
-          ANDROID_KEYSTORE_PATH: ${{ env.ANDROID_KEYSTORE_PATH }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew ${{ inputs.gradle-task }} --no-daemon --stacktrace
+        run: |
+          if [ -n "${ANDROID_GRADLE_INIT_SCRIPT:-}" ]; then
+            ./gradlew --init-script "$ANDROID_GRADLE_INIT_SCRIPT" ${{ inputs.gradle-task }} --no-daemon --stacktrace
+          else
+            ./gradlew ${{ inputs.gradle-task }} --no-daemon --stacktrace
+          fi
 
       - name: Locate APK and calculate checksum
         id: apk
@@ -245,7 +278,9 @@ jobs:
           RELEASE_TAG: ${{ inputs.release-tag }}
           RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
         run: |
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+          fi
           gh release upload "$RELEASE_TAG" \
             "release-assets/$RELEASE_ASSET_NAME" \
             "release-assets/$RELEASE_ASSET_NAME.sha256" \
