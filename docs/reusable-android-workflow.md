@@ -1,14 +1,23 @@
-# Reusable Capacitor Android APK workflow
+# Reusable Capacitor Android workflows
 
-Use `.github/workflows/android-apk.yml` from another workflow to standardize the web build, Capacitor Android project generation/sync, Android SDK setup, Gradle execution, APK artifact upload, SHA-256 calculation, and optional publication to a GitHub Release.
+PWA Kit provides two reusable GitHub Actions workflows:
 
-## Example
+- `.github/workflows/android-apk.yml` builds an APK and uploads it as an Actions artifact. It is intended for PR previews and does not require write access to repository contents.
+- `.github/workflows/android-release.yml` calls the build workflow, requires stable Android signing and version metadata, then publishes the APK and SHA-256 sidecar to a GitHub Release.
+
+Use a reviewed, immutable commit SHA or release tag in the `uses:` reference. The feature branch reference below is only for validating these PRs together.
+
+## Preview build example
 
 ```yaml
 jobs:
-  android:
-    uses: flofy/pwa-kit/.github/workflows/android-apk.yml@feat/reusable-android-workflows
+  android-preview:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: flofy/pwa-kit/.github/workflows/android-apk.yml@5d0232e177994532c19b312e7209557b646e95d4
     with:
+      checkout-ref: ${{ github.sha }}
       capacitor-directory: capacitor
       android-directory: capacitor/android
       install-command: pnpm install --frozen-lockfile
@@ -20,23 +29,50 @@ jobs:
       generate-capacitor-assets: true
       gradle-task: assembleDebug
       apk-path: app/build/outputs/apk/debug/app-debug.apk
-      artifact-name: my-app-android
+      artifact-name: my-app-android-preview
+      comment-pr-artifact: true
+```
+
+The app-specific asset preparation command is optional. The workflow generates the Android project with `npx cap add android` if it is absent, then runs `npx cap sync android`.
+
+## Signed release example
+
+```yaml
+jobs:
+  android-release:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: flofy/pwa-kit/.github/workflows/android-release.yml@5d0232e177994532c19b312e7209557b646e95d4
+    with:
+      checkout-ref: ${{ inputs.version }}
+      capacitor-directory: capacitor
+      android-directory: capacitor/android
+      install-command: pnpm install --frozen-lockfile
+      web-build-command: pnpm run build
+      gradle-task: assembleRelease
+      android-version-code: ${{ github.run_number }}
+      android-version-name: ${{ inputs.version }}
+      apk-path: app/build/outputs/apk/release/app-release.apk
+      artifact-name: my-app-android-release
+      release-tag: ${{ inputs.version }}
+      release-asset-name: MyApp-${{ inputs.version }}.apk
     secrets: inherit
 ```
 
-Replace the branch ref with a reviewed, immutable release tag after this workflow is merged and versioned. The workflow assumes the caller's Capacitor configuration points to the web build output and that the app-specific asset preparation command (if any) is available in the caller repository.
+The release workflow requires these repository or environment secrets:
 
-To publish an APK, pass an existing Git tag through `release-tag`, set `release-asset-name`, `android-version-code`, and `android-version-name`. The workflow creates a GitHub Release for that tag if one does not exist, then uploads the APK and its SHA-256 sidecar. It does not create Git tags.
+- `ANDROID_KEYSTORE_BASE64`: Base64-encoded Android signing keystore.
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
 
-## Signing
+The workflow decodes the keystore to the runner's temporary directory and applies an ephemeral Gradle init script to sign the release variant. It also sets `versionCode` and `versionName` in the generated Android project. `android-version-code` must be positive and monotonically increasing across releases. A release fails if signing secrets or version metadata are missing.
 
-When `release-tag` is set, provide a positive, monotonically increasing `android-version-code` and an `android-version-name`. The workflow writes these into the generated Android project so each release can update the previous installation. All four signing secrets are also required: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The workflow decodes the keystore to the runner's temporary directory and applies an ephemeral Gradle init script to sign the release variant. A release publication fails rather than silently publishing an unsigned APK when any signing secret is missing.
-
-Keep the keystore and passwords in GitHub Actions secrets or an appropriate protected environment. Never commit signing material. Keep the same keystore for every release so existing installations can update in place. Preview builds that omit `release-tag` do not require signing secrets.
+Keep the same keystore for every release so existing installations can update in place. Never commit signing material. The release workflow creates a GitHub Release for the supplied existing Git tag if needed, then uploads the APK and checksum. It does not create Git tags.
 
 ## Important boundaries
 
-- The caller owns app-specific web build behavior, native asset preparation, package ID, and versionCode/versionName. The reusable workflow configures release signing through a temporary Gradle init script when a release is being published.
-- The workflow generates the Android project with `npx cap add android` if it is absent, then runs `npx cap sync android`.
-- Use `assembleDebug` for previews only. For a public release, use a release task and verify that the resulting APK is signed with the stable application key.
-- F-Droid builds and signs from source through its own process; do not treat this workflow's APK as the F-Droid distribution artifact.
+- The caller owns app-specific web build behavior, native asset preparation, package ID, and version policy.
+- Use `assembleDebug` for previews only. Public releases must use a release task and the same stable signing key every time.
+- F-Droid builds and signs from source through its own process; these workflow artifacts are not the F-Droid distribution artifact.
