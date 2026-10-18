@@ -1,0 +1,132 @@
+name: Reusable Android APK
+
+on:
+  workflow_call:
+    inputs:
+      android-directory:
+        description: "Directory containing gradlew and the Android Gradle project"
+        required: true
+        type: string
+      gradle-task:
+        description: "Gradle task to build (use a release task for distributable APKs)"
+        required: false
+        type: string
+        default: assembleRelease
+      apk-path:
+        description: "APK path or glob relative to android-directory"
+        required: true
+        type: string
+      artifact-name:
+        description: "Name of the Actions artifact"
+        required: false
+        type: string
+        default: android-apk
+      release-tag:
+        description: "Existing GitHub release tag; leave empty to only upload an Actions artifact"
+        required: false
+        type: string
+        default: ""
+      release-asset-name:
+        description: "Filename to attach to the GitHub Release"
+        required: false
+        type: string
+        default: android.apk
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Configure optional Android signing secrets
+        if: secrets.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-signing/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        working-directory: ${{ inputs.android-directory }}
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ env.ANDROID_KEYSTORE_PATH }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew ${{ inputs.gradle-task }} --no-daemon --stacktrace
+
+      - name: Locate APK
+        id: apk
+        env:
+          ANDROID_DIRECTORY: ${{ inputs.android-directory }}
+          APK_PATH: ${{ inputs.apk-path }}
+        run: |
+          shopt -s nullglob globstar
+          matches=("$ANDROID_DIRECTORY"/$APK_PATH)
+          if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+            echo "::error::Expected exactly one APK for pattern '$APK_PATH'; found ${#matches[@]}."
+            exit 1
+          fi
+          echo "path=${matches[0]}" >> "$GITHUB_OUTPUT"
+          sha256sum "${matches[0]}" | tee apk-sha256.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Prepare release assets
+        if: inputs.release-tag != ''
+        env:
+          APK_PATH: ${{ steps.apk.outputs.path }}
+          RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
+        run: |
+          mkdir -p release-assets
+          cp "$APK_PATH" "release-assets/$RELEASE_ASSET_NAME"
+          sha256sum "release-assets/$RELEASE_ASSET_NAME" > "release-assets/$RELEASE_ASSET_NAME.sha256"
+
+      - name: Publish APK to GitHub Release
+        if: inputs.release-tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$RELEASE_TAG" \
+            "release-assets/$RELEASE_ASSET_NAME" \
+            "release-assets/$RELEASE_ASSET_NAME.sha256" \
+            --repo "$GITHUB_REPOSITORY" --clobber
