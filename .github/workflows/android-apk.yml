@@ -1,14 +1,54 @@
-name: Reusable Android APK
+name: Reusable Capacitor Android APK
 
 on:
   workflow_call:
     inputs:
-      android-directory:
-        description: "Directory containing gradlew and the Android Gradle project"
+      capacitor-directory:
+        description: "Directory containing the Capacitor package/configuration"
         required: true
         type: string
+      android-directory:
+        description: "Generated Android project directory, relative to the repository root"
+        required: false
+        type: string
+        default: capacitor/android
+      install-command:
+        description: "Command to install web dependencies"
+        required: false
+        type: string
+        default: pnpm install --frozen-lockfile
+      web-build-command:
+        description: "Command to build the web application"
+        required: false
+        type: string
+        default: pnpm run build
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "24"
+      pnpm-version:
+        description: "pnpm version"
+        required: false
+        type: string
+        default: "10.18.3"
+      native-assets-command:
+        description: "Optional app-specific command to prepare native icon/splash assets"
+        required: false
+        type: string
+        default: ""
+      asset-path:
+        description: "Directory containing Capacitor icon/splash source assets"
+        required: false
+        type: string
+        default: assets
+      generate-capacitor-assets:
+        description: "Whether to generate Android icons and splash screens with @capacitor/assets"
+        required: false
+        type: boolean
+        default: true
       gradle-task:
-        description: "Gradle task to build (use a release task for distributable APKs)"
+        description: "Gradle task to run; configure release signing in the app's Gradle project"
         required: false
         type: string
         default: assembleRelease
@@ -53,6 +93,50 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install web dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: Build web application for Capacitor
+        run: ${{ inputs.web-build-command }}
+        env:
+          CAPACITOR: "true"
+          VITE_CAPACITOR: "true"
+
+      - name: Install Capacitor dependencies
+        run: npm install --no-package-lock --no-audit --no-fund
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Generate Android project
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Prepare native assets
+        if: inputs.native-assets-command != ''
+        run: ${{ inputs.native-assets-command }}
+
+      - name: Generate Android icons and splash screens
+        if: inputs.generate-capacitor-assets
+        run: npx --yes @capacitor/assets generate --assetPath "${{ inputs.asset-path }}" --android
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Sync web assets into Android
+        run: npx cap sync android
+        working-directory: ${{ inputs.capacitor-directory }}
+
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -67,19 +151,19 @@ jobs:
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Configure optional Android signing secrets
+      - name: Configure optional Android signing keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "No keystore secret supplied; Gradle will use the caller's signing configuration."
+            echo "No keystore supplied; Gradle signing behavior is controlled by the app project."
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/android-signing"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.keystore"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-signing/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build APK
+      - name: Build Android APK
         working-directory: ${{ inputs.android-directory }}
         env:
           ANDROID_KEYSTORE_PATH: ${{ env.ANDROID_KEYSTORE_PATH }}
@@ -88,7 +172,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew ${{ inputs.gradle-task }} --no-daemon --stacktrace
 
-      - name: Locate APK
+      - name: Locate APK and calculate checksum
         id: apk
         env:
           ANDROID_DIRECTORY: ${{ inputs.android-directory }}
