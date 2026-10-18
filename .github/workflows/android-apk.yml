@@ -1,0 +1,289 @@
+name: Reusable Capacitor Android APK
+
+on:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Optional ref from the caller; defaults to the triggering commit"
+        required: false
+        type: string
+        default: ""
+      capacitor-directory:
+        description: "Directory containing the Capacitor package/configuration"
+        required: true
+        type: string
+      android-directory:
+        description: "Generated Android project directory, relative to the repository root"
+        required: false
+        type: string
+        default: capacitor/android
+      install-command:
+        description: "Command to install web dependencies"
+        required: false
+        type: string
+        default: pnpm install --frozen-lockfile
+      web-build-command:
+        description: "Command to build the web application"
+        required: false
+        type: string
+        default: pnpm run build
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "24"
+      pnpm-version:
+        description: "pnpm version"
+        required: false
+        type: string
+        default: "10.18.3"
+      native-assets-command:
+        description: "Optional app-specific command to prepare native icon/splash assets"
+        required: false
+        type: string
+        default: ""
+      asset-path:
+        description: "Directory containing Capacitor icon/splash source assets"
+        required: false
+        type: string
+        default: assets
+      generate-capacitor-assets:
+        description: "Whether to generate Android icons and splash screens with @capacitor/assets"
+        required: false
+        type: boolean
+        default: true
+      gradle-task:
+        description: "Gradle task to run; release builds are signed when publishing a release"
+        required: false
+        type: string
+        default: assembleRelease
+      apk-path:
+        description: "APK path or glob relative to android-directory"
+        required: true
+        type: string
+      artifact-name:
+        description: "Name of the Actions artifact"
+        required: false
+        type: string
+        default: android-apk
+      comment-pr-artifact:
+        description: "Post or update a pull request comment with the uploaded artifact link"
+        required: false
+        type: boolean
+        default: false
+      android-version-code:
+        description: "Monotonically increasing Android versionCode; required for release publication"
+        required: false
+        type: string
+        default: ""
+      android-version-name:
+        description: "Android versionName; required for release publication"
+        required: false
+        type: string
+        default: ""
+      release-tag:
+        description: "Git tag to publish; leave empty to only upload an Actions artifact"
+        required: false
+        type: string
+        default: ""
+      release-asset-name:
+        description: "Filename to attach to the GitHub Release"
+        required: false
+        type: string
+        default: android.apk
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install web dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: Build web application for Capacitor
+        run: ${{ inputs.web-build-command }}
+        env:
+          CAPACITOR: "true"
+          VITE_CAPACITOR: "true"
+
+      - name: Install Capacitor dependencies
+        run: npm install --no-package-lock --no-audit --no-fund
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Generate Android project
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Prepare native assets
+        if: inputs.native-assets-command != ''
+        run: ${{ inputs.native-assets-command }}
+
+      - name: Generate Android icons and splash screens
+        if: inputs.generate-capacitor-assets
+        run: npx --yes @capacitor/assets generate --assetPath "${{ inputs.asset-path }}" --android
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Sync web assets into Android
+        run: npx cap sync android
+        working-directory: ${{ inputs.capacitor-directory }}
+
+      - name: Set Android release version
+        if: inputs.release-tag != ''
+        working-directory: ${{ inputs.android-directory }}
+        env:
+          ANDROID_VERSION_CODE: ${{ inputs.android-version-code }}
+          ANDROID_VERSION_NAME: ${{ inputs.android-version-name }}
+        run: |
+          if ! [[ "$ANDROID_VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || [ -z "$ANDROID_VERSION_NAME" ]; then
+            echo "::error::Publishing a release requires a positive android-version-code and a non-empty android-version-name."
+            exit 1
+          fi
+          gradle_file="app/build.gradle"
+          test -f "$gradle_file"
+          sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode $ANDROID_VERSION_CODE/" "$gradle_file"
+          perl -0pi -e 's/versionName\s+["\x27][^"\x27]*["\x27]/versionName "$ENV{ANDROID_VERSION_NAME}"/' "$gradle_file"
+          grep -E 'versionCode|versionName' "$gradle_file"
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Configure stable release signing
+        if: inputs.release-tag != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::A GitHub secret named $name is required when publishing an Android release."
+              exit 1
+            fi
+          done
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-signing/release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_GRADLE_INIT_SCRIPT=$RUNNER_TEMP/android-signing/signing.init.gradle" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/android-signing/signing.init.gradle" <<'GRADLE'
+          allprojects { project ->
+            project.plugins.withId('com.android.application') {
+              project.afterEvaluate {
+                def androidExtension = project.extensions.findByName('android')
+                def releaseSigning = androidExtension.signingConfigs.findByName('release')
+                if (releaseSigning == null) {
+                  releaseSigning = androidExtension.signingConfigs.create('release')
+                }
+                releaseSigning.storeFile = new File(System.getenv('ANDROID_KEYSTORE_PATH'))
+                releaseSigning.storePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                releaseSigning.keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+                releaseSigning.keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+                def releaseBuildType = androidExtension.buildTypes.findByName('release')
+                if (releaseBuildType == null) {
+                  throw new GradleException('Android release build type was not found')
+                }
+                releaseBuildType.signingConfig = releaseSigning
+              }
+            }
+          }
+          GRADLE
+
+      - name: Build Android APK
+        working-directory: ${{ inputs.android-directory }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "${ANDROID_GRADLE_INIT_SCRIPT:-}" ]; then
+            ./gradlew --init-script "$ANDROID_GRADLE_INIT_SCRIPT" ${{ inputs.gradle-task }} --no-daemon --stacktrace
+          else
+            ./gradlew ${{ inputs.gradle-task }} --no-daemon --stacktrace
+          fi
+
+      - name: Locate APK and calculate checksum
+        id: apk
+        env:
+          ANDROID_DIRECTORY: ${{ inputs.android-directory }}
+          APK_PATH: ${{ inputs.apk-path }}
+        run: |
+          shopt -s nullglob globstar
+          matches=("$ANDROID_DIRECTORY"/$APK_PATH)
+          if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+            echo "::error::Expected exactly one APK for pattern '$APK_PATH'; found ${#matches[@]}."
+            exit 1
+          fi
+          echo "path=${matches[0]}" >> "$GITHUB_OUTPUT"
+          sha256sum "${matches[0]}" | tee apk-sha256.txt
+
+      - name: Upload APK artifact
+        id: apk-artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Add APK artifact link to pull request
+        if: inputs.comment-pr-artifact && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_ID: ${{ steps.apk-artifact.outputs.artifact-id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          artifact_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts/$ARTIFACT_ID"
+          marker="<!-- keepscore-capacitor-apk-artifact -->"
+          body=$(printf '%s\\n\\n📱 **Android APK preview**\\n\\nCet APK est un artefact de prévisualisation construit depuis cette PR.\\n\\n[Download Android APK artifact](%s)' "$marker" "$artifact_url")
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \\
+            --jq '.[] | select(.body | contains("<!-- keepscore-capacitor-apk-artifact -->")) | .id' | head -n 1)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi
