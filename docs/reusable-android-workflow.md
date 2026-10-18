@@ -30,9 +30,9 @@ To publish an APK, pass an existing `release-tag` and `release-asset-name`. The 
 
 ## Signing
 
-The workflow exposes optional secrets named `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`, and makes the corresponding values available to Gradle. The application must explicitly configure its Android Gradle signing config to consume these environment variables; the workflow does not silently alter application Gradle files or make an unsigned APK a signed release.
+When `release-tag` is set, all four secrets are required: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. The workflow decodes the keystore to the runner's temporary directory and applies an ephemeral Gradle init script to sign the release variant. A release publication fails rather than silently publishing an unsigned APK when any signing secret is missing.
 
-Keep the keystore and passwords in GitHub Actions secrets or an appropriate protected environment. Never commit signing material. A public release must use a stable signing key so existing installations can update in place.
+Keep the keystore and passwords in GitHub Actions secrets or an appropriate protected environment. Never commit signing material. Keep the same keystore for every release so existing installations can update in place. Preview builds that omit `release-tag` do not require signing secrets.
 
 ## Important boundaries
 
