@@ -108,7 +108,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     steps:
       - name: Checkout caller repository
@@ -288,18 +288,36 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
           fi
 
+
+  publish:
+    name: Publish APK to GitHub Release
+    if: inputs.release-tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: downloaded
+
       - name: Prepare release assets
-        if: inputs.release-tag != ''
         env:
-          APK_PATH: ${{ steps.apk.outputs.path }}
           RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
         run: |
+          shopt -s nullglob
+          matches=(downloaded/*.apk)
+          if [ "${#matches[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one APK artifact; found ${#matches[@]}."
+            exit 1
+          fi
           mkdir -p release-assets
-          cp "$APK_PATH" "release-assets/$RELEASE_ASSET_NAME"
+          cp "${matches[0]}" "release-assets/$RELEASE_ASSET_NAME"
           sha256sum "release-assets/$RELEASE_ASSET_NAME" > "release-assets/$RELEASE_ASSET_NAME.sha256"
 
       - name: Publish APK to GitHub Release
-        if: inputs.release-tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release-tag }}
