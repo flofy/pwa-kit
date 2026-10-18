@@ -1,0 +1,59 @@
+name: Reusable application quality checks
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version
+        type: string
+        required: false
+        default: "24"
+      pnpm-version:
+        description: pnpm version
+        type: string
+        required: false
+        default: "10.18.3"
+      install-command:
+        description: Dependency installation command
+        type: string
+        required: false
+        default: pnpm install --frozen-lockfile
+      checks-command:
+        description: Newline-separated quality commands
+        type: string
+        required: true
+      working-directory:
+        description: Directory containing the application
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - name: Install dependencies
+        run: ${{ inputs.install-command }}
+      - name: Run quality checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ inputs.checks-command }}
