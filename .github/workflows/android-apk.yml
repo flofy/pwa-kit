@@ -3,6 +3,11 @@ name: Reusable Capacitor Android APK
 on:
   workflow_call:
     inputs:
+      checkout-ref:
+        description: "Optional ref from the caller; defaults to the triggering commit"
+        required: false
+        type: string
+        default: ""
       capacitor-directory:
         description: "Directory containing the Capacitor package/configuration"
         required: true
@@ -61,6 +66,11 @@ on:
         required: false
         type: string
         default: android-apk
+      comment-pr-artifact:
+        description: "Post or update a pull request comment with the uploaded artifact link"
+        required: false
+        type: boolean
+        default: false
       release-tag:
         description: "Existing GitHub release tag; leave empty to only upload an Actions artifact"
         required: false
@@ -89,9 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -188,12 +201,32 @@ jobs:
           sha256sum "${matches[0]}" | tee apk-sha256.txt
 
       - name: Upload APK artifact
+        id: apk-artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Add APK artifact link to pull request
+        if: inputs.comment-pr-artifact && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_ID: ${{ steps.apk-artifact.outputs.artifact-id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          artifact_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts/$ARTIFACT_ID"
+          marker="<!-- reusable-android-apk-artifact -->"
+          body=$(printf '%s\\n\\n📱 **Android APK preview**\\n\\nCet APK est un artefact de prévisualisation construit depuis cette PR.\\n\\n[Download Android APK artifact](%s)' "$marker" "$artifact_url")
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \\
+            --jq '.[] | select(.body | contains("<!-- reusable-android-apk-artifact -->")) | .id' | head -n 1)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi
 
       - name: Prepare release assets
         if: inputs.release-tag != ''
