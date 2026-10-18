@@ -1,0 +1,147 @@
+name: Reusable Capacitor Android Release
+
+on:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Git ref to build"
+        required: true
+        type: string
+      capacitor-directory:
+        required: true
+        type: string
+      android-directory:
+        required: false
+        type: string
+        default: capacitor/android
+      install-command:
+        required: false
+        type: string
+        default: pnpm install --frozen-lockfile
+      web-build-command:
+        required: false
+        type: string
+        default: pnpm run build
+      node-version:
+        required: false
+        type: string
+        default: "24"
+      pnpm-version:
+        required: false
+        type: string
+        default: "10.18.3"
+      native-assets-command:
+        required: false
+        type: string
+        default: ""
+      asset-path:
+        required: false
+        type: string
+        default: assets
+      generate-capacitor-assets:
+        required: false
+        type: boolean
+        default: true
+      gradle-task:
+        required: false
+        type: string
+        default: assembleRelease
+      android-version-code:
+        required: true
+        type: string
+      android-version-name:
+        required: true
+        type: string
+      apk-path:
+        required: true
+        type: string
+      artifact-name:
+        required: false
+        type: string
+        default: android-release-apk
+      release-tag:
+        required: true
+        type: string
+      release-asset-name:
+        required: true
+        type: string
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: true
+      ANDROID_KEYSTORE_PASSWORD:
+        required: true
+      ANDROID_KEY_ALIAS:
+        required: true
+      ANDROID_KEY_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build signed Android APK
+    uses: ./.github/workflows/android-apk.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      checkout-ref: ${{ inputs.checkout-ref }}
+      capacitor-directory: ${{ inputs.capacitor-directory }}
+      android-directory: ${{ inputs.android-directory }}
+      install-command: ${{ inputs.install-command }}
+      web-build-command: ${{ inputs.web-build-command }}
+      node-version: ${{ inputs.node-version }}
+      pnpm-version: ${{ inputs.pnpm-version }}
+      native-assets-command: ${{ inputs.native-assets-command }}
+      asset-path: ${{ inputs.asset-path }}
+      generate-capacitor-assets: ${{ inputs.generate-capacitor-assets }}
+      gradle-task: ${{ inputs.gradle-task }}
+      android-version-code: ${{ inputs.android-version-code }}
+      android-version-name: ${{ inputs.android-version-name }}
+      apk-path: ${{ inputs.apk-path }}
+      artifact-name: ${{ inputs.artifact-name }}
+      release-tag: ${{ inputs.release-tag }}
+      release-asset-name: ${{ inputs.release-asset-name }}
+    secrets: inherit
+
+  publish:
+    name: Publish APK and checksum
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: downloaded
+
+      - name: Prepare release assets
+        env:
+          RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
+        run: |
+          shopt -s nullglob
+          matches=(downloaded/*.apk)
+          if [ "${#matches[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one APK artifact; found ${#matches[@]}."
+            exit 1
+          fi
+          mkdir -p release-assets
+          cp "${matches[0]}" "release-assets/$RELEASE_ASSET_NAME"
+          sha256sum "release-assets/$RELEASE_ASSET_NAME" > "release-assets/$RELEASE_ASSET_NAME.sha256"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          RELEASE_ASSET_NAME: ${{ inputs.release-asset-name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" \
+            "release-assets/$RELEASE_ASSET_NAME" \
+            "release-assets/$RELEASE_ASSET_NAME.sha256" \
+            --repo "$GITHUB_REPOSITORY" --clobber
