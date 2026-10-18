@@ -174,7 +174,7 @@ jobs:
           gradle_file="app/build.gradle"
           test -f "$gradle_file"
           sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode $ANDROID_VERSION_CODE/" "$gradle_file"
-          perl -0pi -e 's/versionName\\s+["\\x27][^"\\x27]*["\\x27]/versionName "$ENV{ANDROID_VERSION_NAME}"/' "$gradle_file"
+          perl -0pi -e 's/versionName\s+["\x27][^"\x27]*["\x27]/versionName "$ENV{ANDROID_VERSION_NAME}"/' "$gradle_file"
           grep -E 'versionCode|versionName' "$gradle_file"
 
       - name: Setup Java
