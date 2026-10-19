@@ -1,0 +1,75 @@
+name: Reusable auto-format
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        required: false
+        default: "24"
+      pnpm-version:
+        type: string
+        required: false
+        default: "10.18.3"
+      install-command:
+        type: string
+        required: false
+        default: pnpm install --frozen-lockfile
+      format-command:
+        description: Command that formats the repository
+        type: string
+        required: false
+        default: pnpm run format
+      working-directory:
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shared-auto-format-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout pull request branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - name: Install dependencies
+        run: ${{ inputs.install-command }}
+      - name: Format
+        run: ${{ inputs.format-command }}
+      - name: Commit formatting changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Formatting is already clean."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: auto-format"
+          git push
