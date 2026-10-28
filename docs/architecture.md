@@ -12,7 +12,7 @@ Display-mode detection uses `matchMedia` and falls back to iOS Safari's legacy `
 
 ## Update flow
 
-`createUpdateController()` is intentionally registration-agnostic. The app forwards its service-worker tool's "update available" event to `notifyUpdateAvailable()` and passes the existing update action to `applyUpdate()`. The helper does not reload the page; each app can coordinate user confirmation, save state, and reload behavior.
+`checkForServiceWorkerUpdate(registration)` performs an explicit, bounded check against an existing registration and returns a typed result (`available`, `none`, `unsupported`, `timeout`, or `error`). It never applies an update or reloads the page. The app should map an `available` result to `createUpdateController().notifyUpdateAvailable()` and let the user decide when to apply it.\n\n`createUpdateController()` remains registration-agnostic: the app forwards update-available signals to `notifyUpdateAvailable()` and passes its existing update action to `applyUpdate()`. Each app owns confirmation, session preservation, and reload behavior.
 
 ## Cache isolation
 
