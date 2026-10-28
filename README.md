@@ -5,7 +5,7 @@ Framework-agnostic TypeScript utilities for Progressive Web App install and upda
 ## Goals
 
 - Provide a typed, browser-focused core for install prompts and app display mode detection.
-- Model service-worker update state without taking ownership of service-worker registration.
+- Provide an explicit service-worker update check without taking ownership of registration, applying updates, or reloading the page.\n- Model service-worker update state separately from the check result.
 - Keep framework adapters thin and optional.
 - Avoid cache-name collisions between apps sharing an origin.
 

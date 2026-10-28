@@ -154,3 +154,81 @@ export function createUpdateController(): UpdateController {
     },
   };
 }
+
+
+export type ServiceWorkerUpdateCheckResult =
+  | { readonly status: "available" }
+  | { readonly status: "none" }
+  | { readonly status: "unsupported" }
+  | { readonly status: "timeout" }
+  | { readonly status: "error"; readonly error: unknown };
+
+export interface ServiceWorkerUpdateCheckOptions {
+  /** Maximum time to wait for the browser's update check, in milliseconds. Defaults to 10 seconds. */
+  readonly timeoutMs?: number;
+}
+
+/**
+ * Checks for a service-worker update without applying it or reloading the page.
+ * The caller remains responsible for surfacing the result and applying any update.
+ */
+export async function checkForServiceWorkerUpdate(
+  registration: ServiceWorkerRegistration | null | undefined,
+  options: ServiceWorkerUpdateCheckOptions = {},
+): Promise<ServiceWorkerUpdateCheckResult> {
+  if (!registration || typeof registration.update !== "function") {
+    return { status: "unsupported" };
+  }
+
+  if (registration.waiting) return { status: "available" };
+
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  return new Promise<ServiceWorkerUpdateCheckResult>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let installingWorker: ServiceWorker | null = null;
+
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      registration.removeEventListener("updatefound", onUpdateFound);
+      installingWorker?.removeEventListener("statechange", onWorkerStateChange);
+    };
+
+    const finish = (result: ServiceWorkerUpdateCheckResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const onWorkerStateChange = () => {
+      if (installingWorker?.state === "installed") {
+        finish({ status: "available" });
+      } else if (installingWorker?.state === "redundant") {
+        finish({ status: "none" });
+      }
+    };
+
+    const onUpdateFound = () => {
+      installingWorker?.removeEventListener("statechange", onWorkerStateChange);
+      installingWorker = registration.installing;
+      if (!installingWorker) return;
+      installingWorker.addEventListener("statechange", onWorkerStateChange);
+      onWorkerStateChange();
+    };
+
+    registration.addEventListener("updatefound", onUpdateFound);
+    timer = setTimeout(() => finish({ status: "timeout" }), Math.max(0, timeoutMs));
+
+    void registration.update().then(
+      () => {
+        if (registration.waiting || installingWorker?.state === "installed") {
+          finish({ status: "available" });
+        } else if (!installingWorker) {
+          finish({ status: "none" });
+        }
+      },
+      (error: unknown) => finish({ status: "error", error }),
+    );
+  });
+}
