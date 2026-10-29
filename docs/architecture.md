@@ -12,7 +12,15 @@ Display-mode detection uses `matchMedia` and falls back to iOS Safari's legacy `
 
 ## Update flow
 
-`checkForServiceWorkerUpdate(registration)` performs an explicit, bounded check against an existing registration and returns a typed result (`available`, `none`, `unsupported`, `timeout`, or `error`). It never applies an update or reloads the page. The app should map an `available` result to `createUpdateController().notifyUpdateAvailable()` and let the user decide when to apply it.\n\n`createUpdateController()` remains registration-agnostic: the app forwards update-available signals to `notifyUpdateAvailable()` and passes its existing update action to `applyUpdate()`. Each app owns confirmation, session preservation, and reload behavior.
+`checkForServiceWorkerUpdate(registration)` performs an explicit, bounded check against an existing registration and returns a typed result (`available`, `none`, `unsupported`, `timeout`, or `error`). It never applies an update or reloads the page. The app should map an `available` result to `createUpdateController().notifyUpdateAvailable()` and let the user decide when to apply it.
+
+`createUpdateController()` remains registration-agnostic: the app forwards update-available signals to `notifyUpdateAvailable()` and passes its existing update action to `applyUpdate()`. Each app owns confirmation, session preservation, and reload behavior.
+
+## Feedback flow
+
+`createFeedbackIssueUrl(config, input)` builds a prefilled GitHub new-issue URL. It is framework-agnostic and does not create an issue, require a token, or make a network request. The application owns the form UI, validation presentation, navigation, and success/failure messaging.
+
+The target repository and app name are required. App version, page URL, diagnostics, and labels are optional. Applications must only provide page or diagnostic context after explaining it to the user and obtaining any required consent. Never put a GitHub token in client-side code. A future server-backed submission flow should be a separate adapter with server-side credentials and abuse controls.
 
 ## Cache isolation
 
