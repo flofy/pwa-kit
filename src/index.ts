@@ -232,3 +232,52 @@ export async function checkForServiceWorkerUpdate(
     );
   });
 }
+
+
+export type ShareResult = "shared" | "copied" | "cancelled" | "unavailable";
+
+export interface ShareAppOptions {
+  readonly title?: string;
+  readonly text?: string;
+  readonly url?: string;
+}
+
+export interface ShareNavigator {
+  share?: (data: ShareData) => Promise<void>;
+  clipboard?: Pick<Clipboard, "writeText">;
+}
+
+/**
+ * Shares app details with the platform share sheet when available, otherwise
+ * copies the URL. It never opens a popup or assumes a particular framework.
+ */
+export async function shareApp(
+  options: ShareAppOptions,
+  navigatorLike: ShareNavigator = navigator,
+): Promise<ShareResult> {
+  const data: ShareData = {
+    ...(options.title ? { title: options.title } : {}),
+    ...(options.text ? { text: options.text } : {}),
+    ...(options.url ? { url: options.url } : {}),
+  };
+
+  if (navigatorLike.share) {
+    try {
+      await navigatorLike.share(data);
+      return "shared";
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return "cancelled";
+      // A denied or unavailable native share can still fall back to clipboard.
+    }
+  }
+
+  const url = options.url;
+  if (!url || !navigatorLike.clipboard) return "unavailable";
+
+  try {
+    await navigatorLike.clipboard.writeText(url);
+    return "copied";
+  } catch {
+    return "unavailable";
+  }
+}
