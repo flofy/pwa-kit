@@ -25,3 +25,16 @@ Cache Storage is scoped to an origin, not to a single app path. Apps sharing an 
 - No assumptions about a particular bundler.
 - Avoid automatic page reloads and hidden persistence.
 - Browser APIs are only accessed when a controller is created, not at module import time.
+
+
+## Sharing flow
+
+`shareApp(options)` uses the native Web Share API when available. If the API is
+missing or rejects for a reason other than user cancellation, it copies the
+provided URL through the Clipboard API. It returns a small result union so the
+host app can show appropriate feedback. The package does not render UI, generate
+QR codes, or decide where a share action appears; those remain app-level concerns.
+
+The native share sheet and clipboard both require a secure context in browsers
+that enforce those platform restrictions. A cancelled native share is reported
+as `cancelled` and is not treated as a failed share or silently copied.
